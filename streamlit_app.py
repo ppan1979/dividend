@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import requests
+import yfinance as yf  # 僅新增此 library 抓取配息
 
 # --- 1. 密碼檢查 (1215) ---
 def check_password():
@@ -22,52 +23,53 @@ def check_password():
 if not check_password():
     st.stop()
 
-# --- 2. 核心配息數據 (2026 最新公告/預估) ---
-STRICT_DPS = {
-    "0050.TW":   {1: 1.0, 7: 0.36},
-    "006208.TW": {7: 0.989, 11: 3.44},
-    "2412.TW":   {8: 4.7},
-    "2892.TW":   {8: 1.5},
-    "00878.TW":  {2: 0.42, 5: 0.42, 8: 0.42, 11: 0.42},
-    "00919.TW":  {3: 0.72, 6: 0.72, 9: 0.72, 12: 0.72},
-    "2002.TW":   {8: 0.3},
-    "2633.TW":   {8: 1.0},
-}
-
+# --- 2. 核心配息與股價數據 (改為自動從網路抓取) ---
 DEFAULT_ASSETS = {
-    "0050.TW":   {"name": "元大台灣50", "base": 15793, "m": 5000},
-    "006208.TW": {"name": "富邦台50", "base": 4800,  "m": 5000},
-    "2412.TW":   {"name": "中華電", "base": 2556,  "m": 5000},
-    "2892.TW":   {"name": "第一金", "base": 13464, "m": 5000},
-    "00878.TW":  {"name": "國泰永續高股息", "base": 200,   "m": 5000},
-    "00919.TW":  {"name": "群益台灣精選高息", "base": 210,   "m": 5000},
-    "2002.TW":   {"name": "中鋼", "base": 5106,  "m": 0},
-    "2633.TW":   {"name": "台灣高鐵", "base": 1802,  "m": 0},
+    "0050.TW":   {"name": "元大台灣50", "base": 15793, "m": 5000, "months": [1, 7]},
+    "006208.TW": {"name": "富邦台50", "base": 4800,  "m": 5000, "months": [7, 11]},
+    "2412.TW":   {"name": "中華電", "base": 2556,  "m": 5000, "months": [8]},
+    "2892.TW":   {"name": "第一金", "base": 13464, "m": 5000, "months": [8]},
+    "00878.TW":  {"name": "國泰永續高股息", "base": 200,   "m": 5000, "months": [2, 5, 8, 11]},
+    "00919.TW":  {"name": "群益台灣精選高息", "base": 210,   "m": 5000, "months": [3, 6, 9, 12]},
+    "2002.TW":   {"name": "中鋼", "base": 5106,  "m": 0, "months": [8]},
+    "2633.TW":   {"name": "台灣高鐵", "base": 1802,  "m": 0, "months": [8]},
 }
 
-# --- 3. 頁面配置與股價抓取 ---
+@st.cache_data(ttl=86400)
+def fetch_market_data():
+    prices_map = {}
+    dps_map = {}
+    for tk, info in DEFAULT_ASSETS.items():
+        try:
+            ticker = yf.Ticker(tk)
+            # 抓取股價
+            prices_map[tk] = ticker.fast_info['last_price']
+            # 抓取最新一筆配息金額
+            divs = ticker.actions['Dividends']
+            if not divs.empty:
+                latest_val = float(divs.iloc[-1])
+                # 將最新配息金額套用到該標的所有配息月份
+                dps_map[tk] = {m: latest_val for m in info['months']}
+            else:
+                dps_map[tk] = {}
+        except:
+            prices_map[tk] = 0.0
+            dps_map[tk] = {}
+    return prices_map, dps_map
+
+# 執行抓取
+prices, STRICT_DPS = fetch_market_data()
+
+# --- 3. 頁面配置與標題 ---
 st.set_page_config(layout="wide")
 st.title("明細 (修正 006208 月份)")
 
-@st.cache_data(ttl=3600)
-def get_prices():
-    p = {}
-    for tk in DEFAULT_ASSETS.keys():
-        try:
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{tk}"
-            resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
-            p[tk] = resp.json()['chart']['result'][0]['meta']['regularMarketPrice']
-        except:
-            p[tk] = 0.0
-    return p
-
-prices = get_prices()
-
-# --- 4. 依照圖1修改的看板區 ---
+# --- 4. 依照圖1修改的看板區 (保持 Expander 格式) ---
 with st.expander("🔍 點擊檢查各標的當前價格與配息設定"):
     for tk, info in DEFAULT_ASSETS.items():
-        mos = sorted(list(STRICT_DPS.get(tk, {}).keys()))
-        st.markdown(f"**{info['name']}**: ${prices[tk]} | 配息月份: {mos}")
+        mos = sorted(info['months'])
+        d_val = list(STRICT_DPS.get(tk, {0:0}).values())[0]
+        st.markdown(f"**{info['name']}**: ${prices[tk]:.2f} | 網路抓取配息: ${d_val} | 配息月份: {mos}")
 
 st.markdown("---")
 
@@ -87,7 +89,7 @@ for tk, info in DEFAULT_ASSETS.items():
 
 df_config = st.data_editor(pd.DataFrame(edit_data), hide_index=True, use_container_width=True)
 
-# --- 6. 模擬計算邏輯 ---
+# --- 6. 模擬計算邏輯 (不更動邏輯) ---
 def run_simulation(years, cash, config_df):
     results = []
     cfg_map = {row["代碼"]: {"base": row["初始股數"], "m": row["每月定額"]} for _, row in config_df.iterrows()}
@@ -129,7 +131,7 @@ for start_y, end_y, title in phases:
     pivot = sub.pivot(index="月份", columns="年份", values="預估金額")
     st.table(pivot.reindex([f"{i}月" for i in range(1, 13)]))
     
-    # 重新加回年度總計表格
+    # 年度總計表格 (確保保留)
     ann_sum = sub.groupby("年份")["預估金額"].sum().reset_index()
     ann_sum.columns = ["年份", "該年總入帳預估"]
     st.dataframe(ann_sum, hide_index=True, use_container_width=True)
