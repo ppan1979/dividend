@@ -41,13 +41,18 @@ STRICT_DPS = {
     "2892.TW":  {8: 1.5},
 }
 
+# --- 3. 一鍵更新股價按鈕 ---
+if st.button("🔄 一鍵更新所有股票行情"):
+    st.cache_data.clear()
+    st.success("股價已更新！")
+
 @st.cache_data(ttl=3600)
 def get_prices():
     prices = {}
     for ticker in MY_ASSETS.keys():
         try:
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-            resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+            resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
             prices[ticker] = resp.json()['chart']['result'][0]['meta']['regularMarketPrice']
         except:
             prices[ticker] = 200.0 if "0050" in ticker else 25.0
@@ -55,7 +60,7 @@ def get_prices():
 
 prices = get_prices()
 
-# --- 3. 計算 180 個月明細 ---
+# --- 4. 計算 180 個月明細 ---
 def calculate_full_detail(total_years):
     data = []
     for yr in range(2026, 2026 + total_years):
@@ -72,21 +77,28 @@ def calculate_full_detail(total_years):
             data.append({"年份": yr, "月份": f"{m}月", "預估入帳": round(mo_income)})
     return pd.DataFrame(data)
 
-# --- 4. 網頁分段顯示 ---
-st.title("📊 15 年資產入帳全明細")
-st.write(f"數據基準：2026-05-01 | 已修正 00878/00919 於 4 月起購")
+# --- 5. 網頁分段顯示 ---
+st.title("📊 15 年資產入帳全明細與年度總計")
+st.write(f"數據基準：2026-05-01 | 目前 0050 股價: {prices['0050.TW']}")
 
 df_full = calculate_full_detail(15)
 
-# 定義分段函數
 def show_phase(start_yr, end_yr, title):
     st.subheader(title)
+    # 月份明細表
     phase_df = df_full[(df_full["年份"] >= start_yr) & (df_full["年份"] <= end_yr)]
     pivot_df = phase_df.pivot(index="月份", columns="年份", values="預估入帳")
     st.table(pivot_df.reindex([f"{i}月" for i in range(1, 13)]))
+    
+    # 年度總計欄位
+    cols = st.columns(end_yr - start_yr + 1)
+    for i, yr in enumerate(range(start_yr, end_yr + 1)):
+        yr_total = phase_df[phase_df["年份"] == yr]["預估入帳"].sum()
+        cols[i].metric(f"{yr} 總計", f"{yr_total:,.0f} 元")
+    st.markdown("---")
 
-# 顯示 5 個階段，共 15 年
-show_phase(2026, 2028, "📍 階段 1：2026 - 2028")
+# 顯示 5 個階段
+show_phase(2026, 2028, "📍 階段 1：2026 - 2028 (已修正4月起購)")
 show_phase(2029, 2031, "📍 階段 2：2029 - 2031")
 show_phase(2032, 2034, "📍 階段 3：2032 - 2034")
 show_phase(2035, 2037, "📍 階段 4：2035 - 2037")
