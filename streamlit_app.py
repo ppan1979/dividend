@@ -1,114 +1,98 @@
 import streamlit as st
-import requests
 import pandas as pd
+import requests
 from datetime import datetime
 
-# --- 1. 網頁基本設定 ---
-st.set_page_config(page_title="15年全標的資產成長預估", layout="wide")
-
-# --- 2. 密碼保護 (修改密碼為 1215) ---
+# --- 1. 基礎設定與密碼檢查 ---
 def check_password():
-    if "password_correct" not in st.session_state:
-        st.session_state.password_correct = False
-    if st.session_state.password_correct:
-        return True
-    
-    # 使用 sidebar 讓畫面更乾淨
-    pwd = st.sidebar.text_input("🔑 請輸入訪問密碼", type="password")
-    if st.sidebar.button("登入"):
-        if pwd == "1215": # 密碼已更新為 1215
-            st.session_state.password_correct = True
-            st.rerun()
+    def password_entered():
+        if st.session_state["password"] == "1215":
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]
         else:
-            st.sidebar.error("密碼錯誤，請重新輸入")
-    return False
+            st.session_state["password_correct"] = False
 
-if check_password():
-    # --- 3. 全標的即時行情抓取函數 ---
-    @st.cache_data(ttl=600) # 快取 10 分鐘，點擊按鈕可強制更新
-    def get_all_prices(assets_dict):
-        prices = {}
-        for ticker in assets_dict.keys():
-            try:
-                symbol = ticker.split('.')[0]
-                url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_{symbol}.tw"
-                res = requests.get(url, timeout=5).json()
-                p = res['msgArray'][0]['z']
-                # 若盤中無成交價則取昨收價
-                prices[ticker] = float(p) if p != '-' else float(res['msgArray'][0]['y'])
-            except:
-                # 備援價格 (以 2026/05 目前行情為準)
-                fallback = {"0050.TW": 54.5, "006208.TW": 116.5, "2412.TW": 127.0, "2892.TW": 29.5}
-                prices[ticker] = fallback.get(ticker, 100.0)
-        return prices
+    if "password_correct" not in st.session_state:
+        st.sidebar.text_input("請輸入訪問密碼", type="password", on_change=password_entered, key="password")
+        return False
+    elif not st.session_state["password_correct"]:
+        st.sidebar.text_input("請輸入訪問密碼", type="password", on_change=password_entered, key="password")
+        st.sidebar.error("密碼錯誤")
+        return False
+    return True
 
-    # --- 4. 核心數據配置 (依據歷史紀錄與分割後股數) ---
-    STRICT_DPS = {
-        "0050.TW":   {1: 1.0, 7: 0.75},           
-        "006208.TW": {7: 0.9, 11: 1.8},           
-        "2412.TW":   {7: 4.75},                   
-        "2892.TW":   {8: 1.05},                   
-        "00878.TW":  {2: 0.55, 5: 0.55, 8: 0.55, 11: 0.55},
-        "00919.TW":  {3: 0.72, 6: 0.72, 9: 0.72, 12: 0.72},
-        "2002.TW":   {8: 0.35}, "2633.TW": {8: 0.50}
-    }
+if not check_password():
+    st.stop()
 
-    # 您目前的資產狀態 (0050 為分割後股數 15,793)
-    MY_ASSETS = {
-        "0050.TW":   {"base": 15793, "m": 5000},  
-        "006208.TW": {"base": 4800,  "m": 5000},
-        "2412.TW":   {"base": 2556,  "m": 5000},
-        "2892.TW":   {"base": 13464, "m": 5000},
-        "00878.TW":  {"base": 200,   "m": 5000},
-        "00919.TW":  {"base": 210,   "m": 5000},
-        "2002.TW":   {"base": 5106,  "m": 0},
-        "2633.TW":   {"base": 1802,  "m": 0}
-    }
+# --- 2. 資產配置與起始月份修正 ---
+# base: 初始股數, m: 每月投入金額, start_mo: 開始計算月份
+MY_ASSETS = {
+    "0050.TW":  {"base": 15793, "m": 0,    "start_mo": 1}, 
+    "00878.TW": {"base": 0,     "m": 5000, "start_mo": 4}, # 4月才開始買
+    "00919.TW": {"base": 0,     "m": 5000, "start_mo": 4}, # 4月才開始買
+    "2412.TW":  {"base": 1000,  "m": 0,    "start_mo": 1},
+    "2892.TW":  {"base": 2000,  "m": 0,    "start_mo": 1},
+}
 
-    st.title("📈 15年全標的資產複利模型 (網頁版)")
-    
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.write(f"最後同步時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    with col2:
-        if st.button("🔄 一鍵更新所有股票行情"):
-            st.cache_data.clear()
-            st.rerun()
+CASH_BASE = 3000000  # 300萬存款
+INT_RATE = 0.0175    # 銀行年利率 1.75%
 
-    # 執行全標的行情抓取
-    prices = get_all_prices(MY_ASSETS)
-    bank_interest = (3000000 * 0.0175) / 12 # 300萬銀行利息
+# 配息預估 (元/每股)
+STRICT_DPS = {
+    "0050.TW":  {1: 1.0, 7: 3.0},
+    "00878.TW": {2: 0.55, 5: 0.55, 8: 0.55, 11: 0.55},
+    "00919.TW": {3: 0.72, 6: 0.72, 9: 0.72, 12: 0.72},
+    "2412.TW":  {8: 4.7},
+    "2892.TW":  {8: 1.5},
+}
 
-    # --- 5. 生成 5 個階段的 3 年對照表 ---
-    phases = [range(2026, 2029), range(2029, 2032), range(2032, 2035), range(2035, 2038), range(2038, 2041)]
+# --- 3. 抓取即時股價 ---
+@st.cache_data(ttl=3600)
+def get_prices():
+    prices = {}
+    for ticker in MY_ASSETS.keys():
+        try:
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+            resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+            data = resp.json()
+            prices[ticker] = data['chart']['result'][0]['meta']['regularMarketPrice']
+        except:
+            prices[ticker] = 200.0 if "0050" in ticker else 25.0
+    return prices
 
-    for i, yr_range in enumerate(phases, 1):
-        st.markdown(f"#### 📍 階段 {i}：{yr_range[0]} - {yr_range[-1]} 年")
-        data = []
-        yr_totals = {yr: 0 for yr in yr_range}
+prices = get_prices()
 
+# --- 4. 計算核心邏輯 ---
+def calculate_forecast(years):
+    data = []
+    for yr in range(2026, 2026 + years):
         for m in range(1, 13):
-            row = {"月份": f"{m}月"}
-            for yr in yr_range:
-                monthly_income = bank_interest
-                for tkr, info in MY_ASSETS.items():
-                    p = prices[tkr]
-                    # 計算累積股數 (2025/1 起算)
-                    passed_months = (yr - 2025) * 12 + m
-                    total_shares = info['base'] + (info['m'] * passed_months / p)
-                    if m in STRICT_DPS.get(tkr, {}):
-                        monthly_income += total_shares * STRICT_DPS[tkr][m]
+            mo_income = CASH_BASE * (INT_RATE / 12)
+            for tk, info in MY_ASSETS.items():
+                # 只有月份大於等於起始月份才計算
+                current_total_mo = (yr - 2026) * 12 + m
+                start_total_mo = (2026 - 2026) * 12 + info["start_mo"]
                 
-                income_val = int(monthly_income)
-                row[f"{yr}年"] = f"{income_val:,}"
-                yr_totals[yr] += income_val
-            data.append(row)
+                if current_total_mo >= start_total_mo:
+                    # 計算當下累積股數
+                    passed = current_total_mo - start_total_mo
+                    shares = info["base"] + (info["m"] * passed / prices[tk])
+                    # 檢查當月是否配息
+                    if m in STRICT_DPS.get(tk, {}):
+                        mo_income += shares * STRICT_DPS[tk][m]
+            
+            data.append({"年份": yr, "月份": f"{m}月", "預估入帳": round(mo_income)})
+    return pd.DataFrame(data)
 
-        df = pd.DataFrame(data)
-        # 年度總計列
-        footer = {"月份": "**年度總計**"}
-        for yr in yr_range:
-            footer[f"{yr}年"] = f"**{yr_totals[yr]:,}**"
-        
-        df = pd.concat([df, pd.DataFrame([footer])], ignore_index=True)
-        st.table(df) # 產出精簡格式表格
+# --- 5. 網頁顯示 ---
+st.title("📊 個人資產 15 年增長預估")
+st.write(f"系統日期：{datetime.now().strftime('%Y-%m-%d')} | 初始存款：300萬")
+
+df_full = calculate_forecast(15)
+
+# 顯示 2026 - 2028
+st.subheader("📍 階段 1：2026 - 2028 年 (修正 4 月起購版)")
+p1 = df_full[df_full["年份"] <= 2028].pivot(index="月份", columns="年份", values="預估入帳")
+st.table(p1.reindex([f"{i}月" for i in range(1, 13)]))
+
+st.info("💡 說明：00878 與 00919 已設定為 2026 年 4 月起才開始投入，1-3 月僅計算 0050 配息與銀行利息。")
