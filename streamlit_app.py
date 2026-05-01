@@ -23,7 +23,7 @@ def check_password():
 if not check_password():
     st.stop()
 
-# --- 2. 持股與配息設定 (嚴格遵循正確月份) ---
+# --- 2. 持股與正確配息月份設定 ---
 MY_ASSETS = {
     "0050.TW":   {"name": "元大台灣50", "base": 15793, "m": 5000, "start_mo": 1},
     "006208.TW": {"name": "富邦台50", "base": 4800,  "m": 5000, "start_mo": 1},
@@ -39,7 +39,7 @@ INT_RATE = 0.0175
 
 STRICT_DPS = {
     "0050.TW":   {1: 1.0, 7: 3.0},
-    "006208.TW": {7: 2.2, 11: 0.8}, 
+    "006208.TW": {7: 2.2, 11: 0.8}, # 正確月份：7, 11
     "2412.TW":   {8: 4.7},
     "2892.TW":   {8: 1.5},
     "00878.TW":  {2: 0.55, 5: 0.55, 8: 0.55, 11: 0.55},
@@ -58,11 +58,11 @@ with col_input:
 
 with col_btn:
     st.write(" ") # 垂直對齊
-    if st.button("🔄 一鍵更新數據"):
+    if st.button("🔄 一鍵更新所有數據"):
         st.cache_data.clear()
         st.rerun()
 
-# --- 4. 股價抓取與即時價格看板 ---
+# --- 4. 股價抓取與整合看板表格 ---
 @st.cache_data(ttl=3600)
 def get_prices():
     prices = {}
@@ -72,25 +72,26 @@ def get_prices():
             resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
             prices[ticker] = resp.json()['chart']['result'][0]['meta']['regularMarketPrice']
         except:
-            prices[ticker] = 200.0 if "0050" in ticker else 30.0
+            prices[ticker] = 0.0
     return prices
 
 prices = get_prices()
 
-# 顯示即時股價看板
-st.subheader("📈 當前市場即時行情")
-price_cols = st.columns(4)
-for i, (tk, info) in enumerate(MY_ASSETS.items()):
-    price_cols[i % 4].metric(info["name"], f"${prices[tk]}", tk)
+# 整理整合型即時看板表格
+st.subheader("📈 資產配置與市場即時行情總表")
+summary_list = []
+for tk, info in MY_ASSETS.items():
+    mo_list = sorted(list(STRICT_DPS.get(tk, {}).keys()))
+    summary_list.append({
+        "標的名稱": info["name"],
+        "代碼": tk,
+        "即時股價": f"${prices[tk]}",
+        "除息月份": f"{', '.join(map(str, mo_list))} 月",
+        "初始股數": f"{info['base']:,}",
+        "每月定期定額": f"${info['m']:,}"
+    })
 
-# 顯示除息月份檢查
-with st.expander("📅 點擊檢查各標的除息月份設定"):
-    month_data = []
-    for tk, info in MY_ASSETS.items():
-        mo_list = sorted(list(STRICT_DPS.get(tk, {}).keys()))
-        month_data.append({"標的名稱": info["name"], "代碼": tk, "除息月份": f"{mo_list} 月"})
-    st.table(pd.DataFrame(month_data))
-
+st.table(pd.DataFrame(summary_list))
 st.markdown("---")
 
 # --- 5. 計算邏輯 ---
@@ -104,9 +105,10 @@ def calculate_full_detail(total_years, cash_base):
                 current_total_mo = (yr - 2026) * 12 + m
                 start_total_mo = info["start_mo"]
                 if current_total_mo >= start_total_mo:
-                    # 計算定期定額累積股數
+                    # 計算定期定額累積股數 (若股價抓取失敗預設為 100)
+                    price = prices[tk] if prices[tk] > 0 else 100.0
                     passed = current_total_mo - start_total_mo
-                    shares = info["base"] + (info["m"] * passed / prices[tk])
+                    shares = info["base"] + (info["m"] * passed / price)
                     # 計算配息
                     if m in STRICT_DPS.get(tk, {}):
                         mo_income += shares * STRICT_DPS[tk][m]
@@ -120,7 +122,6 @@ def show_phase(s, e, title):
     st.subheader(title)
     phase_df = df_full[(df_full["年份"] >= s) & (df_full["年份"] <= e)]
     pivot = phase_df.pivot(index="月份", columns="年份", values="預估入帳")
-    # 確保月份排序正確
     st.table(pivot.reindex([f"{i}月" for i in range(1, 13)]))
     
     # 年度總結
