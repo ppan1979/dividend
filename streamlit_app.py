@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime
 
 # --- 1. 密碼檢查 ---
 def check_password():
@@ -23,88 +22,110 @@ def check_password():
 if not check_password():
     st.stop()
 
-# --- 2. 最新資產配置 (已修正 006208 月份) ---
-MY_ASSETS = {
-    "0050.TW":   {"name": "元大台灣50", "base": 15793, "m": 5000, "start_mo": 1},
-    "006208.TW": {"name": "富邦台50", "base": 4800,  "m": 5000, "start_mo": 1},
-    "2412.TW":   {"name": "中華電", "base": 2556,  "m": 5000, "start_mo": 1},
-    "2892.TW":   {"name": "第一金", "base": 13464, "m": 5000, "start_mo": 1},
-    "00878.TW":  {"name": "國泰永續高股息", "base": 200,   "m": 5000, "start_mo": 4},
-    "00919.TW":  {"name": "群益台灣精選高息", "base": 210,   "m": 5000, "start_mo": 4},
-    "2002.TW":   {"name": "中鋼", "base": 5106,  "m": 0,    "start_mo": 1},
-    "2633.TW":   {"name": "台灣高鐵", "base": 1802,  "m": 0,    "start_mo": 1},
-}
-
-CASH_BASE = 3000000  
-INT_RATE = 0.0175    
-
-# 修正配息月份 (006208 為 7/11 月)
+# --- 2. 修正後的 2026 配息單價 (根據網路搜尋結果) ---
 STRICT_DPS = {
-    "0050.TW":   {1: 1.0, 7: 3.0},
-    "006208.TW": {7: 2.2, 11: 0.8}, # 已修正：11月配息，非1月
-    "2412.TW":   {8: 4.7},
-    "2892.TW":   {8: 1.5},
-    "00878.TW":  {2: 0.55, 5: 0.55, 8: 0.55, 11: 0.55},
+    "0050.TW":   {1: 1.0, 7: 0.36},    # 修正：1月配1元，7月預估0.36元
+    "006208.TW": {7: 0.989, 11: 3.44}, # 修正：7月0.989元，11月參考去年底
+    "2412.TW":   {8: 4.7},             # 中華電維持預估
+    "2892.TW":   {8: 1.5},             # 第一金維持預估
+    "00878.TW":  {2: 0.42, 5: 0.42, 8: 0.42, 11: 0.42}, # 修正：2月配0.42
     "00919.TW":  {3: 0.72, 6: 0.72, 9: 0.72, 12: 0.72},
     "2002.TW":   {8: 0.3},
     "2633.TW":   {8: 1.0},
 }
 
-# --- 3. 股價抓取 ---
+DEFAULT_ASSETS = {
+    "0050.TW":   {"name": "元大台灣50", "base": 15793, "m": 5000},
+    "006208.TW": {"name": "富邦台50", "base": 4800,  "m": 5000},
+    "2412.TW":   {"name": "中華電", "base": 2556,  "m": 5000},
+    "2892.TW":   {"name": "第一金", "base": 13464, "m": 5000},
+    "00878.TW":  {"name": "國泰永續高股息", "base": 200,   "m": 5000},
+    "00919.TW":  {"name": "群益台灣精選高息", "base": 210,   "m": 5000},
+    "2002.TW":   {"name": "中鋼", "base": 5106,  "m": 0},
+    "2633.TW":   {"name": "台灣高鐵", "base": 1802,  "m": 0},
+}
+
+# --- 3. 即時股價與 Dashboard ---
+st.set_page_config(layout="wide")
+st.title("📈 資產即時預估 Dashboard (2026修正版)")
+
 @st.cache_data(ttl=3600)
 def get_prices():
-    prices = {}
-    for ticker in MY_ASSETS.keys():
+    p = {}
+    for tk in DEFAULT_ASSETS.keys():
         try:
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{tk}"
             resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
-            prices[ticker] = resp.json()['chart']['result'][0]['meta']['regularMarketPrice']
+            p[tk] = resp.json()['chart']['result'][0]['meta']['regularMarketPrice']
         except:
-            prices[ticker] = 200.0 if "0050" in ticker else 30.0
-    return prices
+            p[tk] = 100.0
+    return p
 
 prices = get_prices()
 
-# --- 4. 顯示與計算 ---
-st.title("📊 15 年資產入帳明細 (修正 006208 月份)")
+# 看板區
+st.subheader("📊 即時市場看板")
+tickers = list(DEFAULT_ASSETS.keys())
+for i in range(0, len(tickers), 4):
+    cols = st.columns(4)
+    for j, tk in enumerate(tickers[i:i+4]):
+        with cols[j]:
+            info = DEFAULT_ASSETS[tk]
+            mos = sorted(list(STRICT_DPS.get(tk, {}).keys()))
+            st.metric(label=f"{info['name']} ({tk})", value=f"${prices[tk]}")
+            st.caption(f"配息月: {', '.join(map(str, mos))} (單價依2026公告)")
 
-# 列出當前價格與配息設定檢查
-with st.expander("🔍 點擊檢查各標的當前價格與配息設定"):
-    for tk, info in MY_ASSETS.items():
-        st.write(f"**{info['name']}**: ${prices[tk]} | 配息月份: {list(STRICT_DPS.get(tk, {}).keys())}")
+st.markdown("---")
 
-def calculate_full_detail(total_years):
-    data = []
-    for yr in range(2026, 2026 + total_years):
+# --- 4. 參數異動區 ---
+st.subheader("⚙️ 投資參數自定義")
+col_input, col_action = st.columns([3, 1])
+with col_input:
+    user_cash = st.number_input("💰 目前定存總額 (元):", value=3000000, step=10000)
+with col_action:
+    st.write(" ")
+    if st.button("🔄 重新跑 15 年模擬計算"):
+        st.cache_data.clear()
+        st.rerun()
+
+edit_data = []
+for tk, info in DEFAULT_ASSETS.items():
+    edit_data.append({"代碼": tk, "名稱": info['name'], "初始股數": info['base'], "每月定額": info['m']})
+
+df_config = st.data_editor(pd.DataFrame(edit_data), hide_index=True, use_container_width=True)
+
+# --- 5. 精確計算引擎 ---
+def run_simulation(years, cash, config_df):
+    results = []
+    cfg_map = {row["代碼"]: {"base": row["初始股數"], "m": row["每月定額"]} for _, row in config_df.iterrows()}
+    # 初始化股數
+    shares_map = {tk: float(c["base"]) for tk, c in cfg_map.items()}
+    
+    for yr in range(2026, 2026 + years):
         for m in range(1, 13):
-            mo_income = CASH_BASE * (INT_RATE / 12)
-            for tk, info in MY_ASSETS.items():
-                current_total_mo = (yr - 2026) * 12 + m
-                start_total_mo = info["start_mo"]
-                if current_total_mo >= start_total_mo:
-                    passed = current_total_mo - start_total_mo
-                    shares = info["base"] + (info["m"] * passed / prices[tk])
-                    if m in STRICT_DPS.get(tk, {}):
-                        mo_income += shares * STRICT_DPS[tk][m]
-            data.append({"年份": yr, "月份": f"{m}月", "預估入帳": round(mo_income)})
-    return pd.DataFrame(data)
+            # 先算月收入 (定存息 + 股息)
+            income = cash * (0.0175 / 12)
+            for tk, dps_info in STRICT_DPS.items():
+                if m in dps_info:
+                    # 使用「月底買入前」的持股算配息
+                    income += shares_map[tk] * dps_info[m]
+            
+            # 月底定期定額買入股數 (下個月才能領息)
+            for tk, c in cfg_map.items():
+                shares_map[tk] += c["m"] / prices[tk]
+                
+            results.append({"年份": yr, "月份": f"{m}月", "預估入帳": round(income)})
+    return pd.DataFrame(results)
 
-df_full = calculate_full_detail(15)
+df_result = run_simulation(15, user_cash, df_config)
 
-def show_phase(s, e, title):
-    st.subheader(title)
-    phase_df = df_full[(df_full["年份"] >= s) & (df_full["年份"] <= e)]
-    pivot = phase_df.pivot(index="月份", columns="年份", values="預估入帳")
+# --- 6. 15 年明細表格 ---
+st.markdown("---")
+phases = [(2026, 2028), (2029, 2031), (2032, 2034), (2035, 2037), (2038, 2040), (2041, 2041)]
+for s, e in phases:
+    st.subheader(f"📍 {s} - {e} 現金流預估")
+    sub = df_result[(df_result["年份"] >= s) & (df_result["年份"] <= e)]
+    pivot = sub.pivot(index="月份", columns="年份", values="預估入帳")
     st.table(pivot.reindex([f"{i}月" for i in range(1, 13)]))
-    ann_sum = phase_df.groupby("年份")["預估入帳"].sum().reset_index()
-    ann_sum.columns = ["年份", "年度總領取金額"]
-    st.dataframe(ann_sum, hide_index=True, use_container_width=True)
 
-show_phase(2026, 2028, "📍 第一階段明細")
-show_phase(2029, 2031, "📍 第二階段明細")
-show_phase(2032, 2034, "📍 第三階段明細")
-show_phase(2035, 2037, "📍 第四階段明細")
-show_phase(2038, 2040, "📍 第五階段明細")
-show_phase(2041, 2041, "📍 最終年")
-
-st.success(f"💰 15 年累計現金流：**{df_full['預估入帳'].sum():,.0f}** 元")
+st.success(f"🎊 15 年累計現金流總額預估：**{df_result['預估入帳'].sum():,.0f}** 元")
