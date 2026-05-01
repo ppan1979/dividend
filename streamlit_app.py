@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
 import requests
-import yfinance as yf  # 僅新增此 library 抓取配息
+import yfinance as yf
 
-# --- 1. 密碼檢查 (1215) ---
+# --- 1. 密碼檢查 ---
 def check_password():
     def password_entered():
         if st.session_state["password"] == "1215":
@@ -23,7 +23,7 @@ def check_password():
 if not check_password():
     st.stop()
 
-# --- 2. 核心配息與股價數據 (改為自動從網路抓取) ---
+# --- 2. 核心數據 (修正邏輯：改用年度平均配息) ---
 DEFAULT_ASSETS = {
     "0050.TW":   {"name": "元大台灣50", "base": 15793, "m": 5000, "months": [1, 7]},
     "006208.TW": {"name": "富邦台50", "base": 4800,  "m": 5000, "months": [7, 11]},
@@ -42,38 +42,38 @@ def fetch_market_data():
     for tk, info in DEFAULT_ASSETS.items():
         try:
             ticker = yf.Ticker(tk)
-            # 抓取股價
             prices_map[tk] = ticker.fast_info['last_price']
-            # 抓取最新一筆配息金額
+            
+            # 抓取配息紀錄
             divs = ticker.actions['Dividends']
             if not divs.empty:
-                latest_val = float(divs.iloc[-1])
-                # 將最新配息金額套用到該標的所有配息月份
-                dps_map[tk] = {m: latest_val for m in info['months']}
+                # 僅計算過去一年的配息總和，並平均分配到各月份
+                last_year = divs[divs.index > (pd.Timestamp.now() - pd.DateOffset(years=1))]
+                avg_val = last_year.sum() / len(info['months']) if not last_year.empty else float(divs.iloc[-1])
+                dps_map[tk] = {m: round(avg_val, 3) for m in info['months']}
             else:
                 dps_map[tk] = {}
         except:
-            prices_map[tk] = 0.0
+            prices_map[tk] = 100.0
             dps_map[tk] = {}
     return prices_map, dps_map
 
-# 執行抓取
 prices, STRICT_DPS = fetch_market_data()
 
-# --- 3. 頁面配置與標題 ---
+# --- 3. 頁面配置 ---
 st.set_page_config(layout="wide")
 st.title("明細 (修正 006208 月份)")
 
-# --- 4. 依照圖1修改的看板區 (保持 Expander 格式) ---
+# --- 4. 看板區 (Expander 格式) ---
 with st.expander("🔍 點擊檢查各標的當前價格與配息設定"):
     for tk, info in DEFAULT_ASSETS.items():
         mos = sorted(info['months'])
         d_val = list(STRICT_DPS.get(tk, {0:0}).values())[0]
-        st.markdown(f"**{info['name']}**: ${prices[tk]:.2f} | 網路抓取配息: ${d_val} | 配息月份: {mos}")
+        st.markdown(f"**{info['name']}**: ${prices[tk]:.2f} | 網路平均配息: ${d_val} | 配息月份: {mos}")
 
 st.markdown("---")
 
-# --- 5. 參數編輯與控制區 ---
+# --- 5. 參數編輯區 ---
 col_cash, col_btn = st.columns([3, 1])
 with col_cash:
     user_cash = st.number_input("💰 目前定存總額 (元):", value=3000000, step=10000)
@@ -89,7 +89,7 @@ for tk, info in DEFAULT_ASSETS.items():
 
 df_config = st.data_editor(pd.DataFrame(edit_data), hide_index=True, use_container_width=True)
 
-# --- 6. 模擬計算邏輯 (不更動邏輯) ---
+# --- 6. 模擬計算邏輯 ---
 def run_simulation(years, cash, config_df):
     results = []
     cfg_map = {row["代碼"]: {"base": row["初始股數"], "m": row["每月定額"]} for _, row in config_df.iterrows()}
@@ -97,41 +97,26 @@ def run_simulation(years, cash, config_df):
     
     for yr in range(2026, 2026 + years):
         for m in range(1, 13):
-            # 1. 計算當月利息與股息
             income = cash * (0.0175 / 12)
             for tk, dps_info in STRICT_DPS.items():
                 if m in dps_info:
                     income += shares_map[tk] * dps_info[m]
-            
-            # 2. 月底買入定期定額
             for tk, c in cfg_map.items():
                 if prices[tk] > 0:
                     shares_map[tk] += c["m"] / prices[tk]
-                
             results.append({"年份": yr, "月份": f"{m}月", "預估金額": round(income)})
     return pd.DataFrame(results)
 
 df_final = run_simulation(15, user_cash, df_config)
 
 # --- 7. 明細顯示 (含年度總計) ---
-phases = [
-    (2026, 2028, "📍 第一階段明細"),
-    (2029, 2031, "📍 第二階段明細"),
-    (2032, 2034, "📍 第三階段明細"),
-    (2035, 2037, "📍 第四階段明細"),
-    (2038, 2040, "📍 第五階段明細"),
-    (2041, 2041, "📍 最終階段明細")
-]
+phases = [(2026, 2028, "📍 第一階段明細"), (2029, 2031, "📍 第二階段明細"), (2032, 2034, "📍 第三階段明細"), (2035, 2037, "📍 第四階段明細"), (2038, 2040, "📍 第五階段明細"), (2041, 2041, "📍 最終階段明細")]
 
 for start_y, end_y, title in phases:
     st.subheader(title)
     sub = df_final[(df_final["年份"] >= start_y) & (df_final["年份"] <= end_y)]
-    
-    # 顯示月明細表格
     pivot = sub.pivot(index="月份", columns="年份", values="預估金額")
     st.table(pivot.reindex([f"{i}月" for i in range(1, 13)]))
-    
-    # 年度總計表格 (確保保留)
     ann_sum = sub.groupby("年份")["預估金額"].sum().reset_index()
     ann_sum.columns = ["年份", "該年總入帳預估"]
     st.dataframe(ann_sum, hide_index=True, use_container_width=True)
