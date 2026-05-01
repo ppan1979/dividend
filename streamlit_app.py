@@ -23,7 +23,7 @@ def check_password():
 if not check_password():
     st.stop()
 
-# --- 2. 最新資產配置設定 ---
+# --- 2. 最新資產配置 (已修正 006208 月份) ---
 MY_ASSETS = {
     "0050.TW":   {"name": "元大台灣50", "base": 15793, "m": 5000, "start_mo": 1},
     "006208.TW": {"name": "富邦台50", "base": 4800,  "m": 5000, "start_mo": 1},
@@ -38,10 +38,10 @@ MY_ASSETS = {
 CASH_BASE = 3000000  
 INT_RATE = 0.0175    
 
-# 修正配息月份與預估金額
+# 修正配息月份 (006208 為 7/11 月)
 STRICT_DPS = {
     "0050.TW":   {1: 1.0, 7: 3.0},
-    "006208.TW": {1: 0.8, 7: 2.2},
+    "006208.TW": {7: 2.2, 11: 0.8}, # 已修正：11月配息，非1月
     "2412.TW":   {8: 4.7},
     "2892.TW":   {8: 1.5},
     "00878.TW":  {2: 0.55, 5: 0.55, 8: 0.55, 11: 0.55},
@@ -65,58 +65,46 @@ def get_prices():
 
 prices = get_prices()
 
-st.title("📊 15 年全資產入帳明細表")
+# --- 4. 顯示與計算 ---
+st.title("📊 15 年資產入帳明細 (修正 006208 月份)")
 
-# 股價看板
-cols = st.columns(4)
-for i, (tk, info) in enumerate(MY_ASSETS.items()):
-    cols[i % 4].metric(info["name"], f"${prices[tk]}")
+# 列出當前價格與配息設定檢查
+with st.expander("🔍 點擊檢查各標的當前價格與配息設定"):
+    for tk, info in MY_ASSETS.items():
+        st.write(f"**{info['name']}**: ${prices[tk]} | 配息月份: {list(STRICT_DPS.get(tk, {}).keys())}")
 
-if st.button("🔄 更新即時行情"):
-    st.cache_data.clear()
-    st.rerun()
-
-# --- 4. 計算 180 個月明細 ---
 def calculate_full_detail(total_years):
     data = []
-    # 每個月份初始股數會隨時間累加
     for yr in range(2026, 2026 + total_years):
         for m in range(1, 13):
             mo_income = CASH_BASE * (INT_RATE / 12)
             for tk, info in MY_ASSETS.items():
                 current_total_mo = (yr - 2026) * 12 + m
                 start_total_mo = info["start_mo"]
-                
                 if current_total_mo >= start_total_mo:
-                    # 計算到當月為止累積的股數 (定期定額)
                     passed = current_total_mo - start_total_mo
                     shares = info["base"] + (info["m"] * passed / prices[tk])
-                    
                     if m in STRICT_DPS.get(tk, {}):
                         mo_income += shares * STRICT_DPS[tk][m]
-            
             data.append({"年份": yr, "月份": f"{m}月", "預估入帳": round(mo_income)})
     return pd.DataFrame(data)
 
 df_full = calculate_full_detail(15)
 
-# --- 5. 分段顯示表格與總結 ---
 def show_phase(s, e, title):
     st.subheader(title)
     phase_df = df_full[(df_full["年份"] >= s) & (df_full["年份"] <= e)]
     pivot = phase_df.pivot(index="月份", columns="年份", values="預估入帳")
     st.table(pivot.reindex([f"{i}月" for i in range(1, 13)]))
-    
     ann_sum = phase_df.groupby("年份")["預估入帳"].sum().reset_index()
     ann_sum.columns = ["年份", "年度總領取金額"]
     st.dataframe(ann_sum, hide_index=True, use_container_width=True)
 
-# 顯示 15 年
-show_phase(2026, 2028, "📍 2026 - 2028")
-show_phase(2029, 2031, "📍 2029 - 2031")
-show_phase(2032, 2034, "📍 2032 - 2034")
-show_phase(2035, 2037, "📍 2035 - 2037")
-show_phase(2038, 2040, "📍 2038 - 2040")
-show_phase(2041, 2041, "📍 2041")
+show_phase(2026, 2028, "📍 第一階段明細")
+show_phase(2029, 2031, "📍 第二階段明細")
+show_phase(2032, 2034, "📍 第三階段明細")
+show_phase(2035, 2037, "📍 第四階段明細")
+show_phase(2038, 2040, "📍 第五階段明細")
+show_phase(2041, 2041, "📍 最終年")
 
-st.success(f"💰 15 年預估總領取：**{df_full['預估入帳'].sum():,.0f}** 元")
+st.success(f"💰 15 年累計現金流：**{df_full['預估入帳'].sum():,.0f}** 元")
