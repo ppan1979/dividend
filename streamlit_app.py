@@ -39,7 +39,7 @@ INT_RATE = 0.0175
 
 STRICT_DPS = {
     "0050.TW":   {1: 1.0, 7: 3.0},
-    "006208.TW": {7: 2.2, 11: 0.8}, # 正確月份：7, 11
+    "006208.TW": {7: 2.2, 11: 0.8}, # 修正後月份
     "2412.TW":   {8: 4.7},
     "2892.TW":   {8: 1.5},
     "00878.TW":  {2: 0.55, 5: 0.55, 8: 0.55, 11: 0.55},
@@ -51,18 +51,17 @@ STRICT_DPS = {
 # --- 3. 頁面標題與輸入控制區 ---
 st.title("📊 資產 15 年增長預估系統")
 
-# 定存金額與一鍵更新按鈕
 col_input, col_btn = st.columns([3, 1])
 with col_input:
     user_cash = st.number_input("💰 請輸入當前定存總額 (元):", value=3000000, step=10000)
 
 with col_btn:
-    st.write(" ") # 垂直對齊
+    st.write(" ") 
     if st.button("🔄 一鍵更新所有數據"):
         st.cache_data.clear()
         st.rerun()
 
-# --- 4. 股價抓取與整合看板表格 ---
+# --- 4. 股價抓取與整合看板表格 (名稱與代碼合併) ---
 @st.cache_data(ttl=3600)
 def get_prices():
     prices = {}
@@ -77,14 +76,12 @@ def get_prices():
 
 prices = get_prices()
 
-# 整理整合型即時看板表格
 st.subheader("📈 資產配置與市場即時行情總表")
 summary_list = []
 for tk, info in MY_ASSETS.items():
     mo_list = sorted(list(STRICT_DPS.get(tk, {}).keys()))
     summary_list.append({
-        "標的名稱": info["name"],
-        "代碼": tk,
+        "標的 (代碼)": f"{info['name']} ({tk})", # 合併欄位
         "即時股價": f"${prices[tk]}",
         "除息月份": f"{', '.join(map(str, mo_list))} 月",
         "初始股數": f"{info['base']:,}",
@@ -99,17 +96,14 @@ def calculate_full_detail(total_years, cash_base):
     data = []
     for yr in range(2026, 2026 + total_years):
         for m in range(1, 13):
-            # 每月銀行利息
             mo_income = cash_base * (INT_RATE / 12)
             for tk, info in MY_ASSETS.items():
                 current_total_mo = (yr - 2026) * 12 + m
                 start_total_mo = info["start_mo"]
                 if current_total_mo >= start_total_mo:
-                    # 計算定期定額累積股數 (若股價抓取失敗預設為 100)
                     price = prices[tk] if prices[tk] > 0 else 100.0
                     passed = current_total_mo - start_total_mo
                     shares = info["base"] + (info["m"] * passed / price)
-                    # 計算配息
                     if m in STRICT_DPS.get(tk, {}):
                         mo_income += shares * STRICT_DPS[tk][m]
             data.append({"年份": yr, "月份": f"{m}月", "預估入帳": round(mo_income)})
@@ -124,12 +118,10 @@ def show_phase(s, e, title):
     pivot = phase_df.pivot(index="月份", columns="年份", values="預估入帳")
     st.table(pivot.reindex([f"{i}月" for i in range(1, 13)]))
     
-    # 年度總結
     ann_sum = phase_df.groupby("年份")["預估入帳"].sum().reset_index()
     ann_sum.columns = ["年份", "年度總領取預估"]
     st.dataframe(ann_sum, hide_index=True, use_container_width=True)
 
-# 執行顯示
 phases = [
     (2026, 2028, "📍 第一階段：2026 - 2028"),
     (2029, 2031, "📍 第二階段：2029 - 2031"),
