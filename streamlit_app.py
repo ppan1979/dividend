@@ -23,7 +23,7 @@ def check_password():
 if not check_password():
     st.stop()
 
-# --- 2. 核心數據 (修正邏輯：改用年度平均配息) ---
+# --- 2. 核心數據 (加入空值安全檢查) ---
 DEFAULT_ASSETS = {
     "0050.TW":   {"name": "元大台灣50", "base": 15793, "m": 5000, "months": [1, 7]},
     "006208.TW": {"name": "富邦台50", "base": 4800,  "m": 5000, "months": [7, 11]},
@@ -42,20 +42,23 @@ def fetch_market_data():
     for tk, info in DEFAULT_ASSETS.items():
         try:
             ticker = yf.Ticker(tk)
-            prices_map[tk] = ticker.fast_info['last_price']
+            # 抓取股價，若抓不到給予預設值
+            prices_map[tk] = ticker.fast_info.get('last_price', 100.0)
             
-            # 抓取配息紀錄
             divs = ticker.actions['Dividends']
             if not divs.empty:
-                # 僅計算過去一年的配息總和，並平均分配到各月份
+                # 計算過去一年配息總和並平均
                 last_year = divs[divs.index > (pd.Timestamp.now() - pd.DateOffset(years=1))]
-                avg_val = last_year.sum() / len(info['months']) if not last_year.empty else float(divs.iloc[-1])
-                dps_map[tk] = {m: round(avg_val, 3) for m in info['months']}
+                if not last_year.empty:
+                    avg_val = last_year.sum() / len(info['months'])
+                else:
+                    avg_val = float(divs.iloc[-1])
+                dps_map[tk] = {m: round(float(avg_val), 3) for m in info['months']}
             else:
-                dps_map[tk] = {}
+                dps_map[tk] = {m: 0.0 for m in info['months']}
         except:
             prices_map[tk] = 100.0
-            dps_map[tk] = {}
+            dps_map[tk] = {m: 0.0 for m in info['months']}
     return prices_map, dps_map
 
 prices, STRICT_DPS = fetch_market_data()
@@ -64,11 +67,13 @@ prices, STRICT_DPS = fetch_market_data()
 st.set_page_config(layout="wide")
 st.title("明細 (修正 006208 月份)")
 
-# --- 4. 看板區 (Expander 格式) ---
+# --- 4. 看板區 (修復 IndexError 之處) ---
 with st.expander("🔍 點擊檢查各標的當前價格與配息設定"):
     for tk, info in DEFAULT_ASSETS.items():
         mos = sorted(info['months'])
-        d_val = list(STRICT_DPS.get(tk, {0:0}).values())[0]
+        # 安全取得配息數值，若無資料則顯示 0.0
+        dps_values = list(STRICT_DPS.get(tk, {}).values())
+        d_val = dps_values[0] if dps_values else 0.0
         st.markdown(f"**{info['name']}**: ${prices[tk]:.2f} | 網路平均配息: ${d_val} | 配息月份: {mos}")
 
 st.markdown("---")
@@ -101,22 +106,32 @@ def run_simulation(years, cash, config_df):
             for tk, dps_info in STRICT_DPS.items():
                 if m in dps_info:
                     income += shares_map[tk] * dps_info[m]
+            
             for tk, c in cfg_map.items():
                 if prices[tk] > 0:
                     shares_map[tk] += c["m"] / prices[tk]
+                
             results.append({"年份": yr, "月份": f"{m}月", "預估金額": round(income)})
     return pd.DataFrame(results)
 
 df_final = run_simulation(15, user_cash, df_config)
 
-# --- 7. 明細顯示 (含年度總計) ---
-phases = [(2026, 2028, "📍 第一階段明細"), (2029, 2031, "📍 第二階段明細"), (2032, 2034, "📍 第三階段明細"), (2035, 2037, "📍 第四階段明細"), (2038, 2040, "📍 第五階段明細"), (2041, 2041, "📍 最終階段明細")]
+# --- 7. 明細與年度總計顯示 ---
+phases = [
+    (2026, 2028, "📍 第一階段明細"),
+    (2029, 2031, "📍 第二階段明細"),
+    (2032, 2034, "📍 第三階段明細"),
+    (2035, 2037, "📍 第四階段明細"),
+    (2038, 2040, "📍 第五階段明細"),
+    (2041, 2041, "📍 最終階段明細")
+]
 
 for start_y, end_y, title in phases:
     st.subheader(title)
     sub = df_final[(df_final["年份"] >= start_y) & (df_final["年份"] <= end_y)]
     pivot = sub.pivot(index="月份", columns="年份", values="預估金額")
     st.table(pivot.reindex([f"{i}月" for i in range(1, 13)]))
+    
     ann_sum = sub.groupby("年份")["預估金額"].sum().reset_index()
     ann_sum.columns = ["年份", "該年總入帳預估"]
     st.dataframe(ann_sum, hide_index=True, use_container_width=True)
