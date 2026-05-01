@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime
 
 # --- 1. 密碼檢查 (1215) ---
 def check_password():
@@ -23,21 +22,8 @@ def check_password():
 if not check_password():
     st.stop()
 
-# --- 2. 初始持股與正確配息月份設定 ---
-# 將原始資料存放在字典中作為預設值
-DEFAULT_ASSETS = {
-    "0050.TW":   {"name": "元大台灣50", "base": 15793, "m": 5000, "start_mo": 1},
-    "006208.TW": {"name": "富邦台50", "base": 4800,  "m": 5000, "start_mo": 1},
-    "2412.TW":   {"name": "中華電", "base": 2556,  "m": 5000, "start_mo": 1},
-    "2892.TW":   {"name": "第一金", "base": 13464, "m": 5000, "start_mo": 1},
-    "00878.TW":  {"name": "國泰永續高股息", "base": 200,   "m": 5000, "start_mo": 4},
-    "00919.TW":  {"name": "群益台灣精選高息", "base": 210,   "m": 5000, "start_mo": 4},
-    "2002.TW":   {"name": "中鋼", "base": 5106,  "m": 0,    "start_mo": 1},
-    "2633.TW":   {"name": "台灣高鐵", "base": 1802,  "m": 0,    "start_mo": 1},
-}
-
-INT_RATE = 0.0175    
-
+# --- 2. 核心數據與配息設定 (嚴格鎖定) ---
+# 確保 006208 只有 7, 11 月配息，0050 為 1, 7 月
 STRICT_DPS = {
     "0050.TW":   {1: 1.0, 7: 3.0},
     "006208.TW": {7: 2.2, 11: 0.8}, 
@@ -49,21 +35,30 @@ STRICT_DPS = {
     "2633.TW":   {8: 1.0},
 }
 
-# --- 3. 頁面標題與全域控制 ---
-st.set_page_config(layout="wide")
-st.title("📊 資產 15 年增長預估系統 (動態試算版)")
+DEFAULT_ASSETS = {
+    "0050.TW":   {"name": "元大台灣50", "base": 15793, "m": 5000, "start_mo": 1},
+    "006208.TW": {"name": "富邦台50", "base": 4800,  "m": 5000, "start_mo": 1},
+    "2412.TW":   {"name": "中華電", "base": 2556,  "m": 5000, "start_mo": 1},
+    "2892.TW":   {"name": "第一金", "base": 13464, "m": 5000, "start_mo": 1},
+    "00878.TW":  {"name": "國泰永續高股息", "base": 200,   "m": 5000, "start_mo": 4},
+    "00919.TW":  {"name": "群益台灣精選高息", "base": 210,   "m": 5000, "start_mo": 4},
+    "2002.TW":   {"name": "中鋼", "base": 5106,  "m": 0,    "start_mo": 1},
+    "2633.TW":   {"name": "台灣高鐵", "base": 1802,  "m": 0,    "start_mo": 1},
+}
 
-# 定存與更新按鈕
+# --- 3. 頁面配置 ---
+st.set_page_config(layout="wide")
+st.title("📊 股票資產即時 Dashboard")
+
+# 控制列
 col_top1, col_top2 = st.columns([3, 1])
 with col_top1:
-    user_cash = st.number_input("💰 當前定存總額 (元):", value=3000000, step=10000)
+    user_cash = st.number_input("💰 定存總額設定:", value=3000000, step=10000)
 with col_top2:
     st.write(" ")
     if st.button("🔄 一鍵更新所有數據"):
         st.cache_data.clear()
         st.rerun()
-
-st.markdown("---")
 
 # --- 4. 股價抓取 ---
 @st.cache_data(ttl=3600)
@@ -75,86 +70,80 @@ def get_prices():
             resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
             prices[ticker] = resp.json()['chart']['result'][0]['meta']['regularMarketPrice']
         except:
-            prices[ticker] = 0.0
+            prices[ticker] = 100.0 # 備用價格
     return prices
 
 prices = get_prices()
 
-# --- 5. 資產參數設定區 (可異動) ---
-st.subheader("⚙️ 資產參數設定與即時行情")
-updated_assets = {}
-
-# 使用表格呈現讓使用者輸入
-input_rows = []
-for tk, info in DEFAULT_ASSETS.items():
-    col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 2])
-    with col1:
-        st.write(f"**{info['name']} ({tk})**")
-    with col2:
-        st.write(f"股價: ${prices[tk]}")
-    with col3:
-        mo_list = sorted(list(STRICT_DPS.get(tk, {}).keys()))
-        st.write(f"除息月: {', '.join(map(str, mo_list))}") # 移除「月」字
-    with col4:
-        # 初始股數輸入
-        new_base = st.number_input(f"初始股數", value=int(info['base']), key=f"base_{tk}", step=1)
-    with col5:
-        # 定期定額輸入
-        new_m = st.number_input(f"每月定額", value=int(info['m']), key=f"m_{tk}", step=100)
-    
-    # 儲存更新後的數值
-    updated_assets[tk] = {
-        "name": info["name"],
-        "base": new_base,
-        "m": new_m,
-        "start_mo": info["start_mo"]
-    }
+# --- 5. 即時看板區 (Dashboard 橫向顯示) ---
+st.subheader("📈 市場即時行情看板")
+rows = [list(DEFAULT_ASSETS.keys())[i:i+4] for i in range(0, len(DEFAULT_ASSETS), 4)]
+for row in rows:
+    cols = st.columns(4)
+    for i, tk in enumerate(row):
+        with cols[i]:
+            info = DEFAULT_ASSETS[tk]
+            mo_list = sorted(list(STRICT_DPS.get(tk, {}).keys()))
+            st.metric(label=f"{info['name']} ({tk})", value=f"${prices[tk]}")
+            st.caption(f"除息月份: {', '.join(map(str, mo_list))}")
 
 st.markdown("---")
 
-# --- 6. 計算邏輯 ---
-def calculate_full_detail(total_years, cash_base, assets_config):
+# --- 6. 參數編輯區 (表格形式) ---
+st.subheader("⚙️ 資產參數微調")
+edit_df = []
+for tk, info in DEFAULT_ASSETS.items():
+    edit_df.append({
+        "標的": f"{info['name']} ({tk})",
+        "代碼": tk,
+        "初始股數": info['base'],
+        "每月定額": info['m']
+    })
+
+# 使用實驗性 data_editor 讓表格可直接修改
+edited_data = st.data_editor(pd.DataFrame(edit_df), hide_index=True, use_container_width=True)
+
+# 將修改後的數據轉回字典供計算使用
+updated_assets = {}
+for _, row in edited_data.iterrows():
+    tk = row["代碼"]
+    updated_assets[tk] = {
+        "base": row["初始股數"],
+        "m": row["每月定額"],
+        "start_mo": DEFAULT_ASSETS[tk]["start_mo"]
+    }
+
+# --- 7. 計算與顯示 15 年明細 ---
+def calculate_fixed(years, cash, config):
     data = []
-    for yr in range(2026, 2026 + total_years):
+    int_rate = 0.0175
+    for yr in range(2026, 2026 + years):
         for m in range(1, 13):
-            # 每月銀行利息
-            mo_income = cash_base * (INT_RATE / 12)
-            for tk, info in assets_config.items():
-                current_total_mo = (yr - 2026) * 12 + m
-                start_total_mo = info["start_mo"]
-                if current_total_mo >= start_total_mo:
-                    price = prices[tk] if prices[tk] > 0 else 100.0
-                    passed = current_total_mo - start_total_mo
+            income = cash * (int_rate / 12)
+            for tk, info in config.items():
+                curr_total_mo = (yr - 2026) * 12 + m
+                if curr_total_mo >= info["start_mo"]:
+                    price = prices[tk]
+                    passed = curr_total_mo - info["start_mo"]
+                    # 重新校正股數累積邏輯
                     shares = info["base"] + (info["m"] * passed / price)
                     if m in STRICT_DPS.get(tk, {}):
-                        mo_income += shares * STRICT_DPS[tk][m]
-            data.append({"年份": yr, "月份": f"{m}月", "預估入帳": round(mo_income)})
+                        income += shares * STRICT_DPS[tk][m]
+            data.append({"年份": yr, "月份": f"{m}月", "預估入帳": round(income)})
     return pd.DataFrame(data)
 
-df_full = calculate_full_detail(15, user_cash, updated_assets)
+df_full = calculate_fixed(15, user_cash, updated_assets)
 
-# --- 7. 分段顯示 15 年表格 ---
-def show_phase(s, e, title):
-    st.subheader(title)
-    phase_df = df_full[(df_full["年份"] >= s) & (df_full["年份"] <= e)]
-    pivot = phase_df.pivot(index="月份", columns="年份", values="預估入帳")
+# 分段顯示表格
+ranges = [(2026, 2028), (2029, 2031), (2032, 2034), (2035, 2037), (2038, 2040), (2041, 2041)]
+for s, e in ranges:
+    st.subheader(f"📍 {s} - {e} 預估明細")
+    sub = df_full[(df_full["年份"] >= s) & (df_full["年份"] <= e)]
+    pivot = sub.pivot(index="月份", columns="年份", values="預估入帳")
     st.table(pivot.reindex([f"{i}月" for i in range(1, 13)]))
     
-    ann_sum = phase_df.groupby("年份")["預估入帳"].sum().reset_index()
-    ann_sum.columns = ["年份", "年度總領取預估"]
+    ann_sum = sub.groupby("年份")["預估入帳"].sum().reset_index()
+    ann_sum.columns = ["年份", "該年總領取預估"]
     st.dataframe(ann_sum, hide_index=True, use_container_width=True)
 
-# 顯示各階段
-phases = [
-    (2026, 2028, "📍 2026 - 2028 明細"),
-    (2029, 2031, "📍 2029 - 2031 明細"),
-    (2032, 2034, "📍 2032 - 2034 明細"),
-    (2035, 2037, "📍 2035 - 2037 明細"),
-    (2038, 2040, "📍 2038 - 2040 明細"),
-    (2041, 2041, "📍 2041 最終年")
-]
-
-for s, e, t in phases:
-    show_phase(s, e, t)
-
-st.success(f"🎊 未來 15 年累計領取現金流預估總計：**{df_full['預估入帳'].sum():,.0f}** 元")
+st.success(f"🎊 15 年累計預估總額：**{df_full['預估入帳'].sum():,.0f}** 元")
