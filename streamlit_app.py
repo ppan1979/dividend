@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import requests
 import io
-from datetime import datetime
 
 # --- 1. 訪問權限檢查 ---
 if "password_correct" not in st.session_state:
@@ -25,60 +24,60 @@ ASSET_DETAILS = {
     "2633":   {"name": "台灣高鐵", "base": 1802,  "m": 0,    "months": [8]},
 }
 
-# 五年算術平均 (五年總和 / 5)
+# 五年算術平均基準 (科學基礎)
 SCIENTIFIC_AVG = {
-    "0050": 4.06,   # (4.0+4.9+4.4+3.4+3.6)/5
-    "006208": 2.78, # 歷史五年平均
-    "2412": 4.60,   # 中華電極度穩定平均
-    "2892": 1.15,   # 第一金(含現金與股票換算)平均
-    "00878": 1.45,  # 近年平均配息總和
-    "00919": 2.50,  # 近年平均配息總和
-    "2002": 0.82,   # 中鋼五年算術平均
-    "2633": 1.02,   # 高鐵五年算術平均
+    "0050": 4.06, "006208": 2.78, "2412": 4.60, "2892": 1.15,
+    "00878": 1.45, "00919": 2.50, "2002": 0.82, "2633": 1.02
 }
 
-# --- 3. 證交所數據抓取與科學邏輯 ---
-@st.cache_data(ttl=3600)
+# --- 3. 證交所數據抓取 (強化版) ---
+@st.cache_data(ttl=600) # 縮短緩存時間，確保股價更即時
 def get_market_data():
     prices_map = {}
     dps_map = {}
     
-    # A. 抓取即時股價
+    # A. 抓取即時股價 (增加異常處理與欄位自動偵測)
     try:
         p_url = "https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=open_data"
-        p_df = pd.read_csv(io.StringIO(requests.get(p_url).text))
-        p_df.columns = p_df.columns.str.replace('"', '').str.strip()
-        live_prices = pd.Series(p_df['收盤價'].values, index=p_df['證券代號'].astype(str)).to_dict()
-    except:
+        p_res = requests.get(p_url, timeout=10)
+        p_df = pd.read_csv(io.StringIO(p_res.text))
+        # 清理欄位標題中的空格與引號
+        p_df.columns = [c.replace('"', '').strip() for c in p_df.columns]
+        
+        # 動態尋找包含「代號」與「收盤」字眼的欄位
+        id_col = [c for c in p_df.columns if "證券代號" in c or "代碼" in c][0]
+        price_col = [c for c in p_df.columns if "收盤價" in c][0]
+        
+        live_prices = pd.Series(p_df[price_col].values, index=p_df[id_col].astype(str)).to_dict()
+    except Exception as e:
+        st.warning(f"無法從證交所獲取即時股價，改用參考價格。({e})")
         live_prices = {}
 
-    # B. 抓取最新配息公告 (證交所除權除息預告表)
+    # B. 抓取最新配息公告
     try:
-        # 嘗試取得當年已公告的配息數據
         div_url = "https://www.twse.com.tw/exchangeReport/TWT48U?response=open_data"
-        div_res = requests.get(div_url)
-        div_df = pd.read_csv(io.StringIO(div_res.text))
-        div_df.columns = div_df.columns.str.replace('"', '').str.strip()
-        # 建立 代碼 -> 息值 對照
-        latest_announcement = pd.Series(div_df['現金股利'].values, index=div_df['股票代號'].astype(str)).to_dict()
+        div_df = pd.read_csv(io.StringIO(requests.get(div_url, timeout=10).text))
+        div_df.columns = [c.replace('"', '').strip() for c in div_df.columns]
+        latest_ann = pd.Series(div_df['現金股利'].values, index=div_df['股票代號'].astype(str)).to_dict()
     except:
-        latest_announcement = {}
+        latest_ann = {}
 
+    # C. 邏輯整合
     for tk, info in ASSET_DETAILS.items():
-        # 1. 價格處理
-        p = live_prices.get(tk, 100.0)
-        prices_map[tk] = float(str(p).replace(",", "")) if str(p).replace(".","").isdigit() else 100.0
+        # 1. 股價解析
+        p_val = live_prices.get(tk, 100.0)
+        try:
+            # 處理千分位逗號
+            prices_map[tk] = float(str(p_val).replace(",", ""))
+        except:
+            prices_map[tk] = 100.0
 
-        # 2. 配息科學預估邏輯
-        # 優先權：1. 證交所最新公告 > 2. 歷史五年算術平均
-        yearly_total = latest_announcement.get(tk)
-        
-        # 如果證交所沒有最新公告(或為0)，則使用五年算術平均
+        # 2. 配息科學計算 (公告優先於五年平均)
+        yearly_total = latest_ann.get(tk)
         if pd.isna(yearly_total) or yearly_total == 0:
             yearly_total = SCIENTIFIC_AVG.get(tk, 1.0)
         
-        # 3. 0050 分割科學校正
-        # 若使用的是分割前基準的數據(不論是公告或平均)，皆需除以 4
+        # 3. 0050 分割校正 (1:4)
         if tk == "0050":
             yearly_total = yearly_total / 4
             
@@ -87,28 +86,26 @@ def get_market_data():
             
     return prices_map, dps_map
 
-# --- 4. 介面呈現 (結構保持不變) ---
+# --- 4. 介面呈現 ---
 st.set_page_config(layout="wide", page_title="投資領息精算表")
-st.title("📊 15年投資明細 (科學計算版)")
+st.title("📊 15年投資明細 (證交所連線強化版)")
 
-if st.button("🔄 立即從證交所更新數據"):
+if st.button("🔄 立即更新證交所最新數據"):
     st.cache_data.clear()
-    st.toast("已同步證交所最新公告與五年算術平均數據！")
+    st.rerun()
 
 prices, STRICT_DPS = get_market_data()
 
-# 看板
-st.subheader("📈 證交所數據與科學配息預估")
+# 看板表格
+st.subheader("📈 證交所即時行情與預估")
 combined_view = []
 for tk, info in ASSET_DETAILS.items():
     s_dps = list(STRICT_DPS[tk].values())[0]
     combined_view.append({
-        "代碼": tk, "名稱": info['name'], "目前股價": prices[tk], 
+        "代碼": tk, "名稱": info['name'], "目前股價": f"{prices[tk]:.2f}", 
         "預估單次配息": s_dps, "除息月份": ", ".join(map(str, info['months']))
     })
 st.table(pd.DataFrame(combined_view))
-
-st.info("🧬 **科學基準說明：** 預估配息優先採用證交所當季公告，若無則採計五年算術平均。0050 已完成 1:4 分割權益校正。")
 
 # 設定區
 c1, c2 = st.columns(2)
@@ -147,7 +144,7 @@ def simulate(years, cash, config, rate):
 
 df_final = simulate(15, user_cash, df_config, bank_rate)
 
-# 顯示分階段表格
+# 分階段表格
 phases = [(2026,2028,"第一階段"),(2029,2031,"第二階段"),(2032,2034,"第三階段"),(2035,2037,"第四階段"),(2038,2041,"最終階段")]
 for s, e, title in phases:
     sub = df_final[(df_final["年份"] >= s) & (df_final["年份"] <= e)]
