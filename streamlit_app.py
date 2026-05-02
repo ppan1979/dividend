@@ -122,3 +122,4 @@ for start, end, title in phases:
     st.dataframe(ann_sum, hide_index=True, use_container_width=True)
 
 st.success(f"🎊 15 年累計預估總領取：**{df_final['預估金額'].sum():,.0f}** 元")
+
