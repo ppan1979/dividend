@@ -52,16 +52,29 @@ def calculate_calibrated_dps():
 
 # --- 4. 介面呈現 ---
 st.set_page_config(layout="wide", page_title="投資領息精算表")
-
 st.title("📊 15年投資明細 (含 0050 分割校正與除息月報)")
 
-# --- 一鍵更新按鈕 (移至主畫面) ---
-if st.button("🔄 立即更新數據數據與重新計算"):
+# --- 一鍵更新按鈕 ---
+if st.button("🔄 立即更新數據與重新計算"):
     st.cache_data.clear()
     st.toast("數據已完成更新！")
 
 # 執行計算
 prices, STRICT_DPS, final_avg_0050 = calculate_calibrated_dps()
+
+# --- 新增：即時看板 (即時股價與股息金額) ---
+st.subheader("📈 當前計算基準看板")
+board_data = []
+for tk, info in ASSET_DETAILS.items():
+    # 取得該標的第一次出現的預估股息作為代表
+    sample_dps = list(STRICT_DPS[tk].values())[0]
+    board_data.append({
+        "股票代碼": tk,
+        "名稱": info['name'],
+        "預估股價 (NTD)": prices[tk],
+        "預估單次股息 (NTD)": sample_dps
+    })
+st.table(pd.DataFrame(board_data))
 
 with st.expander("📅 各股票預計除息月份明細表"):
     cal_data = [{"代碼": k, "名稱": v['name'], "預計除息月份": ", ".join([f"{m}月" for m in v['months']])} for k, v in ASSET_DETAILS.items()]
@@ -86,10 +99,13 @@ def simulate_wealth(years, cash, config, rate):
     
     for yr in range(2026, 2026 + years):
         for m in range(1, 13):
+            # 定存利息
             income = cash * (rate / 12)
+            # 依據精確月份領取股息
             for tk, dps_info in STRICT_DPS.items():
                 if m in dps_info:
                     income += shares[tk] * dps_info[m]
+            # 每月投入買入新股數
             for tk, c in cfg.items():
                 if prices[tk] > 0:
                     shares[tk] += c["m"] / prices[tk]
@@ -107,6 +123,7 @@ for s, e, title in phases:
     sub = df_final[(df_final["年份"] >= s) & (df_final["年份"] <= e)]
     pivot = sub.pivot(index="月份", columns="年份", values="預估金額").reindex([f"{i}月" for i in range(1, 13)])
     
+    # 計算並插入年度總計列
     totals = pivot.sum().to_frame().T
     totals.index = ["年度總計"]
     final_display = pd.concat([pivot, totals])
