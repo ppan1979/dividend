@@ -25,7 +25,7 @@ ASSET_DETAILS = {
 }
 
 # --- 3. 即時股價與歷史股息精算 ---
-@st.cache_data(ttl=3600)  # 每小時更新一次即時股價
+@st.cache_data(ttl=3600)
 def get_market_data():
     prices_map = {}
     dps_map = {}
@@ -59,15 +59,16 @@ def get_market_data():
 
 # --- 4. 介面呈現 ---
 st.set_page_config(layout="wide", page_title="投資領息精算表")
-st.title("📊 15年投資明細 (含 0050 分割校正與除息月報)")
+st.title("📊 15年投資明細 (優化行動端尺寸)")
 
-if st.button("🔄 立即更新即時數據與重新計算"):
+if st.button("🔄 立即更新即時數據"):
     st.cache_data.clear()
-    st.toast("即時股價已完成更新！")
+    st.toast("即時報價已更新！")
 
 prices, STRICT_DPS, final_avg_0050 = get_market_data()
 
-st.subheader("📈 資產基準與除息資訊看板 (即時報價)")
+# 頂部整合看板
+st.subheader("📈 資產基準與除息資訊")
 combined_data = []
 for tk, info in ASSET_DETAILS.items():
     sample_dps = list(STRICT_DPS[tk].values())[0]
@@ -80,16 +81,16 @@ for tk, info in ASSET_DETAILS.items():
     })
 st.table(pd.DataFrame(combined_data))
 
-st.info(f"⚖️ **精算備註：** 0050 於 2025/06/18 分割(1:4)，預估單次配息為 **${round(final_avg_0050, 2)}**。")
+st.info(f"⚖️ **精算備註：** 0050 已完成分割校正，預估單次配息為 **${round(final_avg_0050, 2)}**。")
 
-# --- 定存參數設定區 ---
+# 定存設定區
 col1, col2 = st.columns(2)
 with col1:
     user_cash = st.number_input("💰 目前定存總額 (NTD):", value=3000000)
 with col2:
-    bank_rate = st.slider("🏦 預估定存年利率 (%):", min_value=0.0, max_value=5.0, value=1.75, step=0.05) / 100
+    bank_rate = st.slider("🏦 預估定存年利率 (%):", 0.0, 5.0, 1.75, 0.05) / 100
 
-# --- 關鍵優化：調整資料編輯器寬度與欄位配置 ---
+# --- 修正後的編輯表格：固定欄位寬度，不左右滑動 ---
 st.write("📝 **編輯初始股數與每月投入：**")
 df_config_input = pd.DataFrame([
     {"代碼": k, "名稱": v['name'], "初始股數": v['base'], "每月投入": v['m']} 
@@ -101,10 +102,10 @@ df_config = st.data_editor(
     hide_index=True,
     use_container_width=True,
     column_config={
-        "代碼": st.column_config.TextColumn("代碼", width="small"),
-        "名稱": st.column_config.TextColumn("名稱", width="large"), # 名稱給寬一點，其他縮窄
-        "初始股數": st.column_config.NumberColumn("初始", width="small"), # 標題簡化以節省空間
-        "每月投入": st.column_config.NumberColumn("月投", width="small"), # 標題簡化以節省空間
+        "代碼": st.column_config.TextColumn("代碼", width=65),
+        "名稱": st.column_config.TextColumn("名稱", width=120), # 適中寬度
+        "初始股數": st.column_config.NumberColumn("初始", width=70),
+        "每月投入": st.column_config.NumberColumn("月投", width=70),
     }
 )
 
@@ -129,7 +130,7 @@ def simulate_wealth(years, cash, config, rate):
 
 df_final = simulate_wealth(15, user_cash, df_config, bank_rate)
 
-# --- 6. 分階段顯示與「年度總計」欄位 ---
+# --- 6. 分階段顯示結果 ---
 phases = [(2026,2028,"第一階段"),(2029,2031,"第二階段"),(2032,2034,"第三階段"),(2035,2037,"第四階段"),(2038,2041,"最終階段")]
 
 for s, e, title in phases:
@@ -146,4 +147,4 @@ for s, e, title in phases:
             lambda x: ['background-color: #f0f2f6; font-weight: bold; color: #1f77b4' if x.name == '年度總計' else '' for _ in x], axis=1)
         )
 
-st.success(f"🎊 預估 15 年總領取金額：**NT$ {df_final['預估金額'].sum():,.0f}** (定存利率以 {bank_rate*100:.2f}% 計算)")
+st.success(f"🎊 預估 15 年總領取金額：**NT$ {df_final['預估金額'].sum():,.0f}**")
