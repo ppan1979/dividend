@@ -23,7 +23,7 @@ ASSET_DETAILS = {
     "2633":   {"name": "台灣高鐵", "base": 1802,  "m": 0,    "months": [8]},
 }
 
-# --- 3. 0050 歷史數據精算 ---
+# --- 3. 0050 歷史數據精算 (含快取) ---
 @st.cache_data(ttl=86400)
 def calculate_calibrated_dps():
     dps_map = {}
@@ -50,11 +50,18 @@ def calculate_calibrated_dps():
             
     return prices_map, dps_map, avg_0050
 
-prices, STRICT_DPS, final_avg_0050 = calculate_calibrated_dps()
-
 # --- 4. 介面呈現 ---
 st.set_page_config(layout="wide", page_title="投資領息精算表")
+
+# --- 一鍵更新按鈕設定 ---
+if st.sidebar.button("🔄 立即更新數據"):
+    st.cache_data.clear()
+    st.toast("數據已完成更新！")
+
 st.title("📊 15年投資明細 (含 0050 分割校正與除息月報)")
+
+# 執行計算
+prices, STRICT_DPS, final_avg_0050 = calculate_calibrated_dps()
 
 with st.expander("📅 各股票預計除息月份明細表"):
     cal_data = [{"代碼": k, "名稱": v['name'], "預計除息月份": ", ".join([f"{m}月" for m in v['months']])} for k, v in ASSET_DETAILS.items()]
@@ -79,13 +86,10 @@ def simulate_wealth(years, cash, config, rate):
     
     for yr in range(2026, 2026 + years):
         for m in range(1, 13):
-            # 使用變數 rate 代替固定利率 0.0175
             income = cash * (rate / 12)
-            # 依據精確月份領取股息
             for tk, dps_info in STRICT_DPS.items():
                 if m in dps_info:
                     income += shares[tk] * dps_info[m]
-            # 每月投入買入新股數
             for tk, c in cfg.items():
                 if prices[tk] > 0:
                     shares[tk] += c["m"] / prices[tk]
