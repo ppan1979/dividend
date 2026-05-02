@@ -53,12 +53,12 @@ def calculate_calibrated_dps():
 # --- 4. 介面呈現 ---
 st.set_page_config(layout="wide", page_title="投資領息精算表")
 
-# --- 一鍵更新按鈕設定 ---
-if st.sidebar.button("🔄 立即更新數據"):
+st.title("📊 15年投資明細 (含 0050 分割校正與除息月報)")
+
+# --- 一鍵更新按鈕 (移至主畫面) ---
+if st.button("🔄 立即更新數據數據與重新計算"):
     st.cache_data.clear()
     st.toast("數據已完成更新！")
-
-st.title("📊 15年投資明細 (含 0050 分割校正與除息月報)")
 
 # 執行計算
 prices, STRICT_DPS, final_avg_0050 = calculate_calibrated_dps()
