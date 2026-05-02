@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 import io
+import yfinance as yf
 
 # --- 1. 訪問權限檢查 ---
 if "password_correct" not in st.session_state:
@@ -30,30 +31,26 @@ SCIENTIFIC_AVG = {
     "00878": 1.45, "00919": 2.50, "2002": 0.82, "2633": 1.02
 }
 
-# --- 3. 證交所數據抓取 (強化版) ---
-@st.cache_data(ttl=600) # 縮短緩存時間，確保股價更即時
+# --- 3. 數據抓取 (股價: yfinance / 配息: 證交所) ---
+@st.cache_data(ttl=600)
 def get_market_data():
     prices_map = {}
     dps_map = {}
     
-    # A. 抓取即時股價 (增加異常處理與欄位自動偵測)
+    # A. 使用 yfinance 抓取即時股價
+    tickers_list = [f"{tk}.TW" for tk in ASSET_DETAILS.keys()]
     try:
-        p_url = "https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=open_data"
-        p_res = requests.get(p_url, timeout=10)
-        p_df = pd.read_csv(io.StringIO(p_res.text))
-        # 清理欄位標題中的空格與引號
-        p_df.columns = [c.replace('"', '').strip() for c in p_df.columns]
-        
-        # 動態尋找包含「代號」與「收盤」字眼的欄位
-        id_col = [c for c in p_df.columns if "證券代號" in c or "代碼" in c][0]
-        price_col = [c for c in p_df.columns if "收盤價" in c][0]
-        
-        live_prices = pd.Series(p_df[price_col].values, index=p_df[id_col].astype(str)).to_dict()
+        data = yf.download(tickers_list, period="1d", interval="1m", progress=False)
+        if not data.empty:
+            # 取得最後一筆收盤價
+            latest_prices = data['Close'].iloc[-1]
+            for tk in ASSET_DETAILS.keys():
+                prices_map[tk] = float(latest_prices[f"{tk}.TW"])
     except Exception as e:
-        st.warning(f"無法從證交所獲取即時股價，改用參考價格。({e})")
-        live_prices = {}
+        st.warning(f"yfinance 股價抓取失敗，改用手動參考價。")
+        for tk in ASSET_DETAILS.keys(): prices_map[tk] = 100.0
 
-    # B. 抓取最新配息公告
+    # B. 從證交所抓取最新公告 (若有則優先)
     try:
         div_url = "https://www.twse.com.tw/exchangeReport/TWT48U?response=open_data"
         div_df = pd.read_csv(io.StringIO(requests.get(div_url, timeout=10).text))
@@ -62,42 +59,38 @@ def get_market_data():
     except:
         latest_ann = {}
 
-    # C. 邏輯整合
+    # C. 整合計算邏輯
     for tk, info in ASSET_DETAILS.items():
-        # 1. 股價解析
-        p_val = live_prices.get(tk, 100.0)
-        try:
-            # 處理千分位逗號
-            prices_map[tk] = float(str(p_val).replace(",", ""))
-        except:
-            prices_map[tk] = 100.0
-
-        # 2. 配息科學計算 (公告優先於五年平均)
+        # 1. 股息科學計算
         yearly_total = latest_ann.get(tk)
         if pd.isna(yearly_total) or yearly_total == 0:
             yearly_total = SCIENTIFIC_AVG.get(tk, 1.0)
         
-        # 3. 0050 分割校正 (1:4)
+        # 2. 0050 分割校正 (1:4)
         if tk == "0050":
             yearly_total = yearly_total / 4
             
         avg_single = yearly_total / len(info['months'])
         dps_map[tk] = {m: round(avg_single, 3) for m in info['months']}
+        
+        # 3. 股價保底 (若 yfinance 沒抓到)
+        if tk not in prices_map:
+            prices_map[tk] = 100.0
             
     return prices_map, dps_map
 
 # --- 4. 介面呈現 ---
 st.set_page_config(layout="wide", page_title="投資領息精算表")
-st.title("📊 15年投資明細 (證交所連線強化版)")
+st.title("📊 15年投資明細 (混合數據源)")
 
-if st.button("🔄 立即更新證交所最新數據"):
+if st.button("🔄 立即更新行情數據"):
     st.cache_data.clear()
     st.rerun()
 
 prices, STRICT_DPS = get_market_data()
 
 # 看板表格
-st.subheader("📈 證交所即時行情與預估")
+st.subheader("📈 即時行情與預估 (股價: yfinance / 息值: 證交所)")
 combined_view = []
 for tk, info in ASSET_DETAILS.items():
     s_dps = list(STRICT_DPS[tk].values())[0]
