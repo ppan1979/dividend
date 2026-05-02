@@ -63,7 +63,7 @@ def get_market_data():
 
 # --- 4. 介面呈現 ---
 st.set_page_config(layout="wide", page_title="投資領息精算表")
-st.title("📊 15年投資明細 (含 0050 分割校正與除息月報)")
+st.title("📊 15年投資股息計算明細")
 
 # --- 一鍵更新按鈕 ---
 if st.button("🔄 立即更新即時數據與重新計算"):
