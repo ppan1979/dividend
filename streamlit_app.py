@@ -59,7 +59,7 @@ def get_market_data():
 
 # --- 4. 介面呈現 ---
 st.set_page_config(layout="wide", page_title="投資領息精算表")
-st.title("📊 15年投資明細 (優化行動端尺寸)")
+st.title("📊 15年投資與股息預估明細")
 
 if st.button("🔄 立即更新即時數據"):
     st.cache_data.clear()
